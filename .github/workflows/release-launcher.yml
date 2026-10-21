@@ -67,7 +67,7 @@ jobs:
           sdkmanager --list_installed | sed -n '1,40p'
 
       - name: Build APK
-        working-directory: launcher/MojoLauncher
+        working-directory: launcher
         run: |
           chmod +x gradlew
           ./gradlew :sclauncher:clean :sclauncher:assembleDebug \
@@ -77,12 +77,12 @@ jobs:
         id: apk
         run: |
           set -e
-          APK=$(find launcher/MojoLauncher/sclauncher/build/outputs/apk/debug -name '*.apk' | head -n 1)
+          APK=$(find launcher/sclauncher/build/outputs/apk/debug -name '*.apk' | head -n 1)
           test -n "$APK"
           test -f "$APK"
 
-          VERSIONCODE=$(grep -m1 'versionCode ' launcher/MojoLauncher/sclauncher/build.gradle | awk '{print $2}')
-          VERSIONNAME=$(grep -m1 'baseVersionName =' launcher/MojoLauncher/sclauncher/build.gradle \
+          VERSIONCODE=$(grep -m1 'versionCode ' launcher/sclauncher/build.gradle | awk '{print $2}')
+          VERSIONNAME=$(grep -m1 'baseVersionName =' launcher/sclauncher/build.gradle \
             | sed -n 's/.*: "\([^"]*\)"/\1/p')
           MD5=$(md5sum "$APK" | cut -d' ' -f1)
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
