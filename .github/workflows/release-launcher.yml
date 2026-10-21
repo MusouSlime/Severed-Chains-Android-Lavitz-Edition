@@ -1,0 +1,115 @@
+name: SCLauncher Android build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create, e.g. v1.0.43-sc30'
+        required: true
+      launcher_ref:
+        description: 'MusouSlime/MojoLauncher ref (branch or tag) to build'
+        required: false
+        default: 'sc-1.0.43-sc30'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Resolve inputs
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "launcher_ref=${{ inputs.launcher_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "launcher_ref=sc-1.0.43-sc30" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout launcher source
+        uses: actions/checkout@v4
+        with:
+          repository: MusouSlime/MojoLauncher
+          ref: ${{ steps.vars.outputs.launcher_ref }}
+          path: launcher
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "ndk;29.0.14206865" "cmake;3.22.1" >/dev/null
+
+      - name: Build APK
+        working-directory: launcher/MojoLauncher
+        run: |
+          chmod +x gradlew
+          ./gradlew :sclauncher:clean :sclauncher:assembleDebug \
+            -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon --console=plain
+
+      - name: Locate APK and build manifest
+        id: apk
+        run: |
+          set -e
+          APK=$(find launcher/MojoLauncher/sclauncher/build/outputs/apk/debug -name '*.apk' | head -n 1)
+          test -n "$APK"
+          test -f "$APK"
+
+          VERSIONCODE=$(grep -m1 'versionCode ' launcher/MojoLauncher/sclauncher/build.gradle | awk '{print $2}')
+          VERSIONNAME=$(grep -m1 'baseVersionName =' launcher/MojoLauncher/sclauncher/build.gradle \
+            | sed -n 's/.*: "\([^"]*\)"/\1/p')
+          MD5=$(md5sum "$APK" | cut -d' ' -f1)
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+
+          cp "$APK" ./sclauncher-sclauncher-debug.apk
+          echo "$SHA  sclauncher-sclauncher-debug.apk" > ./sclauncher-sclauncher-debug.apk.sha256
+
+          cat > update.json <<EOF
+          {
+            "versionCode": ${VERSIONCODE},
+            "versionName": "${VERSIONNAME}",
+            "abi": "arm64-v8a",
+            "minSdk": 21,
+            "apk": "sclauncher-sclauncher-debug.apk",
+            "apkUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.vars.outputs.tag }}/sclauncher-sclauncher-debug.apk",
+            "md5": "${MD5}",
+            "sha256": "${SHA}"
+          }
+          EOF
+
+          echo "versionCode=${VERSIONCODE}" >> "$GITHUB_OUTPUT"
+          echo "versionName=${VERSIONNAME}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: "Severed Chains: Android Lavitz Edition — ${{ steps.apk.outputs.versionName }}"
+          body: |
+            Automated SCLauncher build from `MusouSlime/MojoLauncher@${{ steps.vars.outputs.launcher_ref }}`.
+
+            versionCode `${{ steps.apk.outputs.versionCode }}` · SHA-256 `${{ steps.apk.outputs.sha256 }}`
+
+            Install over the top (do NOT uninstall; an uninstall wipes the extracted `files/`).
+            arm64-v8a, debug-signed.
+          files: |
+            sclauncher-sclauncher-debug.apk
+            sclauncher-sclauncher-debug.apk.sha256
+            update.json
+          fail_on_unmatched_files: true
